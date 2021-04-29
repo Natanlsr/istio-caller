@@ -1,0 +1,50 @@
+##################################################################################################
+# Caller application
+##################################################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: caller-application
+  labels:
+    app: caller-application
+    service: caller-application
+spec:
+  ports:
+    - port: 8081
+      name: http
+  selector:
+    app: caller-application
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: caller
+  labels:
+    account: caller-application
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caller-application
+  labels:
+    app: caller-application
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: caller-application
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: caller-application
+        version: v1
+    spec:
+      serviceAccountName: caller
+      containers:
+        - name: caller-application
+          image:  caller-application:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081

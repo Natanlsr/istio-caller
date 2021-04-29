@@ -1,0 +1,81 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: auth-filter
+spec:
+  workloadSelector:
+    labels:
+      app: caller-application
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: SIDECAR_OUTBOUND
+        listener:
+          filterChain:
+            filter:
+              name: "envoy.filters.network.http_connection_manager"
+              subFilter:
+                name: "envoy.filters.http.router"
+      patch:
+        operation: INSERT_BEFORE
+        value: # lua filter specification
+          name: envoy.lua
+          typed_config:
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua"
+            inlineCode: |
+              function envoy_on_request(request_handle)
+                local auth_host = "auth-application.default.svc.cluster.local"
+                local auth_path = "/call/test"
+                local cluster = "outbound|" .. 8080 .. "||" .. auth_host
+
+
+                -- Create headers
+                local request_headers = {
+                    [":method"] = "GET",
+                    [":path"] = auth_path,
+                    [":authority"] = auth_host,
+                }
+
+                -- Make an HTTP call to the auth host
+                local response_headers, response_body = request_handle:httpCall(
+                  cluster,
+                  request_headers,
+                  "",
+                  5000
+                )
+
+                local resp_status = tonumber(response_headers[":status"])
+
+                request_handle:logCritical("[CUSTOM AUTH FILTER ] Auth Response: " .. response_body)
+                request_handle:logCritical("[CUSTOM AUTH FILTER ] Auth Status Response: " .. resp_status)
+
+                if resp_status == 200 then
+                  request_handle:headers():add("Authorization", response_body)
+                  request_handle:headers():add("upstream_body_size", #response_body)
+                  request_handle:headers():add("test", response_body)
+                else
+                  request_handle:respond({response_headers, response_body})
+                end
+
+              end
+
+#    - applyTo: CLUSTER
+#      match:
+#        context: SIDECAR_OUTBOUND
+#      patch:
+#        operation: ADD
+#        value: # cluster specification
+#          name: "auth_cluster"
+#          type: STRICT_DNS
+#          connect_timeout: 0.5s
+#          lb_policy: ROUND_ROBIN
+#          load_assignment:
+#            cluster_name: auth_cluster
+#            endpoints:
+#              - lb_endpoints:
+#                  - endpoint:
+#                      address:
+#                        socket_address:
+#                          protocol: TCP
+#                          address: "auth-application.default.svc.cluster.local"
+#                          port_value: 8080
